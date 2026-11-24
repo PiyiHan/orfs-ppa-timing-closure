@@ -1,0 +1,98 @@
+schema_version = "1.4"
+multi_step_reward_strategy = "final"
+
+[task]
+name = "piyihan/orfs-ppa-timing-closure"
+version = "0.1.0"
+authors = [{ name = "Peiyi Han" }]
+description = "Harbor multi-step PPA and timing-closure task: optimize an AES-128 cipher (aes_cipher_top) on NanGate45 with OpenROAD-flow-scripts under a tight clock constraint."
+keywords = ["eda", "openroad", "orfs", "physical-design", "timing-closure", "ppa", "multi-step", "aes"]
+
+[metadata]
+author_name = "Peiyi Han"
+difficulty = "hard"
+difficulty_explanation = "Requires coordinated RTL/synthesis, floorplan/placement/CTS, and post-route timing/DRC/PPA closure under hard functional and signoff gates."
+category = "chip-design-ppa"
+tags = ["eda", "openroad", "orfs", "physical-design", "timing-closure", "ppa", "multi-step"]
+
+[environment]
+build_timeout_sec = 7200.0
+cpus = 8
+memory_mb = 16384
+storage_mb = 20480
+gpus = 0
+network_mode = "no-network"
+workdir = "/workspace"
+
+[environment.healthcheck]
+command = "bash -lc 'command -v yosys && command -v openroad && command -v iverilog && command -v vvp && command -v verilator && command -v z3 && command -v python3 && yosys -V | head -1'"
+interval_sec = 5
+timeout_sec = 60
+retries = 3
+
+[agent]
+timeout_sec = 1200.0
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 900.0
+
+[verifier.environment]
+cpus = 8
+memory_mb = 16384
+storage_mb = 20480
+network_mode = "no-network"
+
+[[steps]]
+name = "step-1-frontend-synth"
+min_reward = { func_pass = 1.0, lec_pass = 1.0, synth_pass = 1.0 }
+artifacts = [
+  "/workspace/rtl",
+  "/workspace/config.mk",
+  "/workspace/constraints",
+  "/workspace/scripts_override",
+  "/workspace/results/nangate45/aes/base/1_synth.v",
+  "/workspace/handoff_notes.md",
+]
+[steps.agent]
+timeout_sec = 900.0
+[steps.verifier]
+timeout_sec = 300.0
+environment_mode = "separate"
+
+[[steps]]
+name = "step-2-place-cts"
+min_reward = { cts_pass = 1.0 }
+artifacts = [
+  "/workspace/rtl",
+  "/workspace/config.mk",
+  "/workspace/constraints",
+  "/workspace/scripts_override",
+  "/workspace/results/nangate45/aes/base/1_synth.v",
+  "/workspace/results/nangate45/aes/base/4_cts.odb",
+  "/workspace/handoff_notes.md",
+]
+[steps.agent]
+timeout_sec = 1200.0
+[steps.verifier]
+timeout_sec = 420.0
+environment_mode = "separate"
+
+[[steps]]
+name = "step-3-route-signoff"
+artifacts = [
+  "/workspace/rtl",
+  "/workspace/config.mk",
+  "/workspace/constraints",
+  "/workspace/scripts_override",
+  "/workspace/results/nangate45/aes/base/1_synth.v",
+  "/workspace/results/nangate45/aes/base/6_final.odb",
+  "/workspace/results/nangate45/aes/base/6_final.v",
+  "/workspace/results/nangate45/aes/base/6_final.gds",
+  "/workspace/results/nangate45/aes/base/6_final.spef",
+]
+[steps.agent]
+timeout_sec = 1500.0
+[steps.verifier]
+timeout_sec = 900.0
+environment_mode = "separate"

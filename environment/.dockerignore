@@ -1,0 +1,10 @@
+**/.git
+**/results
+**/logs
+**/reports
+**/objects
+**/*.odb
+**/*.gds
+**/*.vcd
+**/*.vvp
+**/.DS_Store
