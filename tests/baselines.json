@@ -1,0 +1,48 @@
+{
+  "image": "openroad/orfs:26Q4-554-g82ac25be5@sha256:b59431453d328d6fbf36669e1908b15634c11da51970cc2218a702783dcd6174",
+  "clock_period_ns": 0.65,
+  "num_cores": 4,
+  "platform": "nangate45",
+  "design_name": "aes_cipher_top",
+  "tolerance": 0.02,
+  "gates": {
+    "hold_wns_min_ns": 0.0,
+    "drc_max": 0
+  },
+  "baseline": {
+    "wns_setup": null,
+    "tns_setup": null,
+    "wns_hold": null,
+    "tns_hold": null,
+    "die_area_um2": null,
+    "core_area_um2": null,
+    "stdcell_area_um2": null,
+    "utilization": null,
+    "total_power_w": null,
+    "drc_violations": null,
+    "antenna_violations": null,
+    "max_slew_violations": null,
+    "max_cap_violations": null,
+    "max_fanout_violations": null,
+    "cts_pass": null,
+    "runtime_sec": null
+  },
+  "oracle": {
+    "wns_setup": null,
+    "tns_setup": null,
+    "wns_hold": null,
+    "tns_hold": null,
+    "die_area_um2": null,
+    "core_area_um2": null,
+    "stdcell_area_um2": null,
+    "utilization": null,
+    "total_power_w": null,
+    "drc_violations": null,
+    "antenna_violations": null,
+    "max_slew_violations": null,
+    "max_cap_violations": null,
+    "max_fanout_violations": null,
+    "runtime_sec": null,
+    "note": "Area/power anchors are measured_oracle * 1.02 (2% relaxation). Positive WNS anchor is measured_oracle * 0.98."
+  }
+}

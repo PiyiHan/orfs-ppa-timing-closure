@@ -1,0 +1,7 @@
+# Reference Yosys LEC skeleton (the verifier generates an equivalent script).
+design -copy-from gold -as gold gold
+design -copy-from gate -as gate gate
+equiv_make gold gate equiv
+equiv_simple -seq 10
+equiv_induct -seq 10
+equiv_status -assert
