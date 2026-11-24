@@ -7,6 +7,7 @@ Writes /logs/verifier/reward.txt (4 decimal places, [0, 1]) and
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ BASELINES_PATH = TESTS_DIR / "baselines.json"
 
 RESULTS_DIR = WORKSPACE / "results" / "nangate45" / "aes" / "base"
 SYNTH_V = RESULTS_DIR / "1_synth.v"
+SYNTH_YOSYS_V = RESULTS_DIR / "1_2_yosys.v"
 CTS_ODB = RESULTS_DIR / "4_cts.odb"
 FINAL_ODB = RESULTS_DIR / "6_final.odb"
 FINAL_V = RESULTS_DIR / "6_final.v"
@@ -89,18 +91,44 @@ def load_baselines() -> Dict[str, Any]:
         return json.load(f)
 
 
+def _numeric_reward_payload(reward: float, details: Dict[str, Any]) -> Dict[str, float]:
+    """Harbor 0.27 requires every top-level reward.json value to be a finite number."""
+    payload: Dict[str, float] = {"reward": round(float(reward), 4)}
+
+    def _absorb(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key == "reward":
+                    continue
+                if isinstance(value, dict):
+                    _absorb(value)
+                    continue
+                if isinstance(value, bool):
+                    if key not in payload:
+                        payload[key] = 1.0 if value else 0.0
+                elif isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    if key not in payload:
+                        payload[key] = float(value)
+
+    _absorb(details)
+    return payload
+
+
 def write_reward(reward: float, details: Dict[str, Any]) -> None:
     ensure_logdir()
     reward = max(0.0, min(1.0, float(reward)))
     txt = f"{reward:.4f}\n"
     (LOGDIR / "reward.txt").write_text(txt)
-    payload = {"reward": round(reward, 4), **details}
-    (LOGDIR / "reward.json").write_text(json.dumps(payload, indent=2) + "\n")
+    full = {"reward": round(reward, 4), **details}
+    numeric = _numeric_reward_payload(reward, details)
+    (LOGDIR / "reward.json").write_text(json.dumps(numeric, indent=2) + "\n")
+    (LOGDIR / "reward_details.json").write_text(json.dumps(full, indent=2, default=str) + "\n")
     # Debug copy when /logs is not mounted
     try:
         (WORKSPACE / "out").mkdir(parents=True, exist_ok=True)
         (WORKSPACE / "out" / "reward.txt").write_text(txt)
-        (WORKSPACE / "out" / "reward.json").write_text(json.dumps(payload, indent=2) + "\n")
+        (WORKSPACE / "out" / "reward.json").write_text(json.dumps(numeric, indent=2) + "\n")
+        (WORKSPACE / "out" / "reward_details.json").write_text(json.dumps(full, indent=2, default=str) + "\n")
     except Exception:
         pass
     log(f"reward={reward:.4f}")
@@ -553,13 +581,29 @@ def compute_final_reward(
     return reward, details
 
 
+def resolve_synth_verilog() -> Optional[Path]:
+    """ORFS 26Q4 writes 1_2_yosys.v; some flows also copy it to 1_synth.v."""
+    for path in (SYNTH_V, SYNTH_YOSYS_V):
+        if path.is_file() and path.stat().st_size > 0:
+            text = _read_text(path)
+            if "module" in text or "endmodule" in text:
+                return path
+    return None
+
+
 def check_synth_artifact() -> Tuple[float, str]:
-    if SYNTH_V.is_file() and SYNTH_V.stat().st_size > 0:
-        # Reject empty / obviously broken netlists
-        text = _read_text(SYNTH_V)
-        if "endmodule" in text or "module" in text:
-            return 1.0, str(SYNTH_V)
-    return 0.0, f"missing or invalid {SYNTH_V}"
+    path = resolve_synth_verilog()
+    if path is None:
+        return 0.0, f"missing or invalid {SYNTH_V} (also tried {SYNTH_YOSYS_V})"
+    # Normalize the Harbor artifact name when the agent/ORFS only left 1_2_yosys.v.
+    if path != SYNTH_V:
+        try:
+            SYNTH_V.parent.mkdir(parents=True, exist_ok=True)
+            if not SYNTH_V.exists():
+                shutil.copy2(path, SYNTH_V)
+        except Exception as exc:
+            log(f"could not normalize {path} -> {SYNTH_V}: {exc}")
+    return 1.0, str(path)
 
 
 def check_cts_artifact() -> Tuple[float, str]:
@@ -628,7 +672,7 @@ def evaluate_step1() -> int:
     lec_net = None
     if g_synth == 1.0:
         try:
-            lec_net, lec_net_msg = run_yosys_lec(GOLDEN_RTL, SYNTH_V)
+            lec_net, lec_net_msg = run_yosys_lec(GOLDEN_RTL, resolve_synth_verilog() or SYNTH_V)
             log(f"netlist LEC: {lec_net_msg}")
         except Exception as exc:
             lec_net, lec_net_msg = 0.0, str(exc)
@@ -679,7 +723,7 @@ def evaluate_step3() -> int:
     final_lec = RESULTS_DIR / "6_final_lec.v"
     synth_lec = RESULTS_DIR / "1_synth_lec.v"
     net_gate = final_lec if final_lec.is_file() else FINAL_V
-    net_gold = synth_lec if synth_lec.is_file() else (RESULTS_DIR / "1_synth.v")
+    net_gold = synth_lec if synth_lec.is_file() else (resolve_synth_verilog() or SYNTH_V)
     if net_gate.is_file() and net_gold.is_file():
         try:
             lec_v, lec_v_msg = run_kepler_netlist_lec(net_gold, net_gate)

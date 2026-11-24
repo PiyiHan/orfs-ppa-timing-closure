@@ -22,6 +22,9 @@ help:
 
 synth:
 	$(ORFS_MAKE) synth
+	@if [ -f $(RESULTS)/1_2_yosys.v ] && [ ! -s $(RESULTS)/1_synth.v ]; then \
+	  cp -f $(RESULTS)/1_2_yosys.v $(RESULTS)/1_synth.v; \
+	fi
 
 floorplan:
 	$(ORFS_MAKE) floorplan
