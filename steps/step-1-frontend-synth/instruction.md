@@ -6,7 +6,7 @@
 
 - 工作目录：`/workspace`
 - RTL：`/workspace/rtl/`（顶层 `aes_cipher_top`，端口为 `clk, rst, ld, done, key[127:0], text_in[127:0], text_out[127:0]`）
-- 时钟约束：见 `/workspace/constraints/constraint.sdc`。当前黄金时钟周期为 **0.65 ns**（含 0.210 ns clock latency 与 20% I/O delay）。**严禁放宽周期或添加时序例外。**
+- 时钟约束：见 `/workspace/constraints/constraint.sdc`。当前黄金时钟周期为 **0.84 ns**（含 0.210 ns clock latency 与 20% I/O delay）。**严禁放宽周期或添加时序例外。**
 - 冒烟仿真：`make sim-smoke`（仅含少量公开向量；完整黄金测试集对 Agent 不可见）
 - 综合：`make synth`（OpenROAD-flow-scripts，结果写入 `/workspace/results/nangate45/aes/base/`）
 - 初始 `config.mk` 故意使用较差的综合/物理默认值。

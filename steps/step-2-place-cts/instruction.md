@@ -7,7 +7,7 @@
 - 工作目录：`/workspace`（文件系统在步骤间保持）
 - 运行：`make floorplan`、`make place`、`make cts`，或直接 `make cts` 跑到 CTS
 - 清理重跑：`make clean_place` / `make clean_cts`
-- 约束仍然由 `/workspace/constraints/constraint.sdc` 给出（0.65 ns 时钟，不可放宽）
+- 约束仍然由 `/workspace/constraints/constraint.sdc` 给出（0.84 ns 时钟，不可放宽）
 
 ## 目标
 

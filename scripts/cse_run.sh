@@ -91,7 +91,7 @@ case "$MODE" in
     rm -rf "${WORK}/workspace"
     mkdir -p "${WORK}/workspace"
     cp -a "${ROOT}/environment/starter/." "${WORK}/workspace/"
-    sed -i "s/set clk_period 0.65/set clk_period 2.00/" "${WORK}/workspace/constraints/constraint.sdc" || true
+    sed -i "s/set clk_period 0.84/set clk_period 2.00/" "${WORK}/workspace/constraints/constraint.sdc" || true
     cp -f "${ROOT}/steps/step-3-route-signoff/tests/test.sh" "${WORK}/tests/test.sh"
     chmod +x "${WORK}/tests/test.sh"
     run_in "export TESTS_DIR=/tests; bash /tests/test.sh" || true

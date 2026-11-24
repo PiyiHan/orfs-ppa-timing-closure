@@ -23,6 +23,11 @@ export NUM_CORES="${NUM_CORES:-4}"
 mkdir -p "$WORKDIR"
 cp -f "${SOLDIR}/config_step1.mk" "${WORKDIR}/config.mk"
 # Keep the golden-equivalent starter SDC; never rewrite the period.
+mkdir -p "${WORKDIR}/floorplan"
+if [ -f "${SOLDIR}/aes_ng45_fp.def" ]; then
+  cp -f "${SOLDIR}/aes_ng45_fp.def" "${WORKDIR}/floorplan/aes_ng45_fp.def"
+fi
+
 if [ ! -f "${WORKDIR}/constraints/constraint.sdc" ]; then
   echo "ERROR: missing ${WORKDIR}/constraints/constraint.sdc" >&2
   exit 1
@@ -32,9 +37,8 @@ cat > "${WORKDIR}/handoff_notes.md" <<'EOF'
 # Frontend handoff (oracle)
 
 - RTL: official OpenCores `aes_cipher_top` (ports and latency unchanged).
-- Synthesis knobs: SWAP_ARITH_OPERATORS=1, OPENROAD_HIERARCHICAL=1.
-- Suggested backend starting point: CORE_UTILIZATION=40, PLACE_DENSITY_LB_ADDON=0.20, TNS_END_PERCENT=100, SETUP_REPAIR_PHASES=PARALLEL_EVAL.
-- Clock: do not relax the golden 0.65 ns SDC.
+- Suggested backend starting point: CORE_UTILIZATION=30, PLACE_DENSITY_LB_ADDON=0.20, TNS_END_PERCENT=100, SETUP_REPAIR_PHASES=PARALLEL_EVAL.
+- Clock: do not relax the golden SDC period.
 EOF
 
 cd "$WORKDIR"

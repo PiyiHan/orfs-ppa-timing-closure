@@ -8,13 +8,13 @@ export PLATFORM        = nangate45
 export VERILOG_FILES = $(sort $(wildcard /workspace/rtl/*.v))
 export SDC_FILE      = /workspace/constraints/constraint.sdc
 
-# Tighter floorplan and more aggressive timing repair than the starter.
-export CORE_UTILIZATION = 40
+# Tighter automatic floorplan than the starter (CORE_UTILIZATION=25) with
+# full timing repair. Official aes_ng45_fp.def was measured to worsen the
+# I/O-limited setup path on this golden period, so it is not used here.
+export CORE_UTILIZATION = 30
 export CORE_ASPECT_RATIO = 1
 export CORE_MARGIN = 2
 export PLACE_DENSITY_LB_ADDON = 0.20
 export TNS_END_PERCENT = 100
 export SETUP_REPAIR_PHASES = PARALLEL_EVAL
 export SKIP_INCREMENTAL_REPAIR = 1
-export SWAP_ARITH_OPERATORS = 1
-export OPENROAD_HIERARCHICAL = 1

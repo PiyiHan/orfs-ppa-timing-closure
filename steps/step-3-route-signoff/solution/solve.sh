@@ -23,6 +23,11 @@ export NUM_CORES="${NUM_CORES:-4}"
 mkdir -p "$WORKDIR"
 cp -f "${SOLDIR}/config_step3.mk" "${WORKDIR}/config.mk"
 # Keep the golden-equivalent starter SDC; never rewrite the period.
+mkdir -p "${WORKDIR}/floorplan"
+if [ -f "${SOLDIR}/aes_ng45_fp.def" ]; then
+  cp -f "${SOLDIR}/aes_ng45_fp.def" "${WORKDIR}/floorplan/aes_ng45_fp.def"
+fi
+
 if [ ! -f "${WORKDIR}/constraints/constraint.sdc" ]; then
   echo "ERROR: missing ${WORKDIR}/constraints/constraint.sdc" >&2
   exit 1
