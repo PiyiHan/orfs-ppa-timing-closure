@@ -35,6 +35,22 @@ proc json_int {x} {
   return $r
 }
 
+# Liberty must be loaded before SPEF / STA. The ODB has geometry but not .lib.
+set libf [file join $plat lib NangateOpenCellLibrary_typical.lib]
+if {![file exists $libf]} {
+  set libs [glob -nocomplain [file join $plat lib *typical*.lib]]
+  if {[llength $libs] > 0} { set libf [lindex $libs 0] }
+}
+if {[file exists $libf]} {
+  if {[catch {read_liberty $libf} err]} {
+    puts "WARNING: read_liberty $libf failed: $err"
+  } else {
+    puts "Loaded liberty: $libf"
+  }
+} else {
+  puts "WARNING: no typical liberty found under $plat/lib"
+}
+
 if {[catch {read_db $odb} err]} {
   puts "ERROR: read_db failed: $err"
   exit 1
@@ -123,6 +139,13 @@ if {![catch {ord::get_db_block} block] && $block ne "NULL" && $block ne ""} {
       set skip 0
       if {![catch {$master isBlock} ib] && $ib} { set skip 1 }
       if {![catch {$master isPad} ip] && $ip} { set skip 1 }
+      if {![catch {$master isFiller} iff] && $iff} { set skip 1 }
+      if {![catch {$master isTapcell} it] && $it} { set skip 1 }
+      if {![catch {$master isEndcap} ie] && $ie} { set skip 1 }
+      if {![catch {$master isCover} ic] && $ic} { set skip 1 }
+      if {![catch {$master getName} mn]} {
+        if {[regexp -nocase {FILLCELL|TAPCELL|FILLER|ENDCAP} $mn]} { set skip 1 }
+      }
       if {$skip} { continue }
       if {![catch {$master getWidth} w] && ![catch {$master getHeight} h]} {
         set acc [expr {$acc + double($w) * double($h) / ($dbu * $dbu)}]
@@ -135,20 +158,17 @@ if {![catch {ord::get_db_block} block] && $block ne "NULL" && $block ne ""} {
   }
 }
 
-# Power: sta::design_power returns {internal switching leakage total} in Watts.
+# Power: report_power -format json (Watts). Parsed by helpers.py from power.json.
+# sta::design_power / sta::cmd_corner are not available in this OpenSTA build.
 set intern ""
 set switchp ""
 set leak ""
 set totalp ""
-if {![catch {sta::cmd_corner} corner] && $corner ne ""} {
-  if {![catch {sta::design_power $corner} pwr]} {
-    if {[llength $pwr] >= 4} {
-      set intern  [lindex $pwr 0]
-      set switchp [lindex $pwr 1]
-      set leak    [lindex $pwr 2]
-      set totalp  [lindex $pwr 3]
-    }
-  }
+set pfile [file join [file dirname $outj] power.json]
+if {[catch {report_power -format json -digits 8 > $pfile} err]} {
+  puts "WARNING: report_power failed: $err"
+} else {
+  puts "Wrote $pfile"
 }
 
 # Electrical violations

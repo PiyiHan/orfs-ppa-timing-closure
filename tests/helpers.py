@@ -344,6 +344,59 @@ def run_yosys_lec(
         shutil.rmtree(script.parent, ignore_errors=True)
 
 
+
+def _kepler_bin() -> Optional[str]:
+    return shutil.which("kepler-formal")
+
+
+def run_kepler_netlist_lec(net1: Path, net2: Path) -> Tuple[float, str]:
+    """Independently LEC two liberty-mapped netlists with Kepler Formal (KISSAT).
+
+    Yosys equiv_induct cannot build a SAT model for Nangate DFF_X1 cells when
+    they are read as liberty black boxes, and functional liberty + induct is
+    too slow for the verifier budget. Kepler is the ORFS bundled checker.
+    """
+    ensure_logdir()
+    exe = _kepler_bin()
+    if not exe:
+        return 0.0, "kepler-formal not found"
+    if not net1.is_file() or not net2.is_file():
+        return 0.0, f"missing netlist ({net1} / {net2})"
+    if not LIBERTY.is_file():
+        return 0.0, f"missing liberty {LIBERTY}"
+    work = Path(tempfile.mkdtemp(prefix="kepler_lec_"))
+    cfg = work / "lec.yml"
+    logf = work / "kepler.log"
+    cfg.write_text(
+        "format: verilog\n"
+        "input_paths:\n"
+        f"  - {net1}\n"
+        f"  - {net2}\n"
+        "liberty_files:\n"
+        f"  - {LIBERTY}\n"
+        f"log_file: {logf}\n"
+    )
+    try:
+        run = subprocess.run(
+            [exe, "--config", str(cfg)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        out = (run.stdout or "") + "\n" + (run.stderr or "")
+        logtxt = logf.read_text() if logf.is_file() else ""
+        (LOGDIR / "kepler_lec.log").write_text(out + "\n===== log =====\n" + logtxt)
+        blob = out + "\n" + logtxt
+        if "Circuits are IDENTICAL" in blob or "No difference was found" in blob:
+            log("netlist LEC PASS (kepler)")
+            return 1.0, "kepler: circuits identical"
+        return 0.0, "kepler: difference or error"
+    except subprocess.TimeoutExpired:
+        return 0.0, "kepler LEC timeout"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def extract_signoff_metrics(odb: Path = FINAL_ODB, spef: Optional[Path] = None) -> Dict[str, Any]:
     """Recompute PPA/DRC from the ODB with the golden SDC. Never trust agent reports."""
     ensure_logdir()
@@ -373,6 +426,20 @@ def extract_signoff_metrics(odb: Path = FINAL_ODB, spef: Optional[Path] = None) 
         raise RuntimeError(f"signoff metrics not written (rc={run.returncode})")
     with out_json.open() as f:
         metrics = json.load(f)
+    power_json = out_json.parent / "power.json"
+    if power_json.is_file():
+        try:
+            pdata = json.loads(power_json.read_text())
+            total = pdata.get("Total") or {}
+            if total.get("total") is not None:
+                metrics["internal_power_w"] = float(total.get("internal"))
+                metrics["switching_power_w"] = float(total.get("switching"))
+                metrics["leakage_power_w"] = float(total.get("leakage"))
+                metrics["total_power_w"] = float(total["total"])
+        except Exception as exc:
+            log(f"warning: failed to parse power.json: {exc}")
+    # Persist merged power so signoff_metrics.json is the complete source of truth.
+    out_json.write_text(json.dumps(metrics, indent=2) + "\n")
     log("signoff metrics: " + json.dumps(metrics, sort_keys=True))
     return metrics
 
@@ -417,18 +484,19 @@ def compute_final_reward(
     tns = _f(metrics.get("tns_setup"))
     wns_b = _f(b.get("wns_setup"), -1.0)
     wns_o_meas = o.get("wns_setup")
-    # Positive WNS oracle anchor relaxed by 2% (easier); fall back to 0.05 ns.
+    # Positive WNS oracle anchor is measured * (1 - tolerance), per the plan.
+    # Fall back to 0.05 ns only when the oracle WNS has not been locked yet.
     if wns_o_meas is None:
         wns_o = 0.05
     else:
         wns_o_meas_f = _f(wns_o_meas, 0.0)
-        wns_o = max(wns_o_meas_f * (1.0 - tol), 0.05) if wns_o_meas_f > 0 else 0.05
+        wns_o = wns_o_meas_f * (1.0 - tol) if wns_o_meas_f > 0 else 0.05
 
     if wns < 0:
         denom = 0.0 - wns_b
         s_timing = 0.65 * clip01((wns - wns_b) / denom) if abs(denom) > 1e-12 else 0.0
     elif tns >= -1e-6:
-        s_timing = 0.75 + 0.25 * clip01(wns / max(wns_o, 0.05))
+        s_timing = 0.75 + 0.25 * clip01(wns / max(wns_o, 1e-12))
     else:
         # WNS >= 0 but TNS still negative (shouldn't happen); treat as not fully closed.
         s_timing = 0.65
@@ -608,7 +676,23 @@ def evaluate_step3() -> int:
     g_func, func_msg = run_functional_sim(WORKSPACE / "rtl", GOLDEN_TB)
     # LEC RTL vs golden; also try final netlist if present.
     g_lec, lec_msg = run_yosys_lec(GOLDEN_RTL, WORKSPACE / "rtl")
-    if FINAL_V.is_file():
+    final_lec = RESULTS_DIR / "6_final_lec.v"
+    synth_lec = RESULTS_DIR / "1_synth_lec.v"
+    net_gate = final_lec if final_lec.is_file() else FINAL_V
+    net_gold = synth_lec if synth_lec.is_file() else (RESULTS_DIR / "1_synth.v")
+    if net_gate.is_file() and net_gold.is_file():
+        try:
+            lec_v, lec_v_msg = run_kepler_netlist_lec(net_gold, net_gate)
+            log(f"netlist LEC ({net_gold.name} vs {net_gate.name}): {lec_v_msg}")
+            if lec_v != 1.0:
+                g_lec = 0.0
+                lec_msg = lec_v_msg
+        except Exception as exc:
+            log(f"netlist LEC error: {exc}")
+            g_lec = 0.0
+            lec_msg = str(exc)
+    elif FINAL_V.is_file():
+        # Fall back to Yosys only if Kepler ingredients are missing.
         try:
             lec_v, lec_v_msg = run_yosys_lec(GOLDEN_RTL, FINAL_V)
             log(f"6_final.v LEC: {lec_v_msg}")
