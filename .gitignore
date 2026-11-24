@@ -32,3 +32,10 @@ tmp/
 # Local calibration scratch
 /calibration/
 /scratch/
+
+# Secrets and confidential exam materials (never commit)
+.env
+.env.*
+*.pem
+*.pdf
+id_rsa*

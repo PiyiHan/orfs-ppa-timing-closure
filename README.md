@@ -168,9 +168,9 @@ $$R_{\text{final}} = G_{\text{integrity}} \cdot G_{\text{func}} \cdot G_{\text{f
 
 ### 6.1 环境版本锁定
 
-- **基础镜像**：`openroad/orfs:<待锁定具体版本 Tag / Digest>`
+- **基础镜像**：`openroad/orfs:26Q4-554-g82ac25be5@sha256:b59431453d328d6fbf36669e1908b15634c11da51970cc2218a702783dcd6174`
 - **工艺库**：`nangate45`
-- **目标时钟周期（Golden SDC）**：`[待实测标定，单位 ns]`
+- **目标时钟周期（Golden SDC）**：`0.84`
 - **硬件与并发配置**：8 vCPU / 16 GB RAM，`NUM_CORES=4`，`network_mode="none"`
 
 ### 6.2 Baseline vs. Oracle 实测指标对比
@@ -178,16 +178,16 @@ $$R_{\text{final}} = G_{\text{integrity}} \cdot G_{\text{func}} \cdot G_{\text{f
 | 阶段 / 指标 | Baseline（初始配置） | Oracle 参考解 | 说明 |
 | :--- | :--- | :--- | :--- |
 | **Step 1 功能仿真 & LEC** | Pass / Pass | Pass / Pass | 门控通过 |
-| **Step 2 CTS 合法性** | `[Pass/Fail]` | Pass | 生成合法 `4_cts.odb` |
-| **Setup WNS (ns)** | `[待实测填充，如 -0.35]` | `[待实测填充，>= 0.00]` | 目标 $\ge 0$ |
-| **Setup TNS (ns)** | `[待实测填充]` | `0.00` | 目标 $= 0$ |
-| **Hold WNS (ns)** | `[待实测填充]` | `[待实测填充，>= 0.00]` | 硬门控 $\ge 0$ |
-| **Core / StdCell Area ($\mu\text{m}^2$)** | `[待实测填充]` | `[待实测填充]` | 显著缩减 |
-| **Total Power (mW)** | `[待实测填充]` | `[待实测填充]` | OpenSTA 签核值 |
-| **DRC Violations** | `[待实测填充]` | `0` | 硬门控 $= 0$ |
-| **Antenna / Slew / Cap Violations** | `[待实测填充]` | `0 / 0 / 0` | 签核质量项 |
-| **总运行耗时（3 步合计）** | `[待实测填充]` | `[待实测填充]` | 远低于单步超时阈值 |
-| **最终 `reward.txt` 得分** | `[待实测填充]` | **`1.0000`** | 连续 2 次复现一致 |
+| **Step 2 CTS 合法性** | `Pass` | Pass | 生成合法 `4_cts.odb` |
+| **Setup WNS (ns)** | `0.005438` | `0.006188` | 目标 $\ge 0$ |
+| **Setup TNS (ns)** | `0.00` | `0.00` | 目标 $= 0$ |
+| **Hold WNS (ns)** | `0.10479` | `0.102505` | 硬门控 $\ge 0$ |
+| **Core / StdCell Area ($\mu\text{m}^2$)** | `73516.016 / 20188.868` | `61583.256 / 19797.05` | 显著缩减 |
+| **Total Power (mW)** | `44.457` | `43.411` | OpenSTA 签核值 |
+| **DRC Violations** | `0` | `0` | 硬门控 $= 0$ |
+| **Antenna / Slew / Cap Violations** | `0 / 0 / 0` | `0 / 0 / 0` | 签核质量项 |
+| **总运行耗时（3 步合计）** | `299 s` | `341 s` | 远低于单步超时阈值 |
+| **最终 `reward.txt` 得分** | `0.5384` | **`1.0000`** | 连续 2 次复现一致 |
 
 ---
 
