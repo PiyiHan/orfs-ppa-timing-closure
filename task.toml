@@ -52,6 +52,7 @@ artifacts = [
   "/workspace/constraints",
   "/workspace/scripts_override",
   "/workspace/results/nangate45/aes/base/1_synth.v",
+  "/workspace/results/nangate45/aes/base/1_2_yosys.v",
   "/workspace/handoff_notes.md",
 ]
 [steps.agent]
@@ -69,6 +70,7 @@ artifacts = [
   "/workspace/constraints",
   "/workspace/scripts_override",
   "/workspace/results/nangate45/aes/base/1_synth.v",
+  "/workspace/results/nangate45/aes/base/1_2_yosys.v",
   "/workspace/results/nangate45/aes/base/4_cts.odb",
   "/workspace/handoff_notes.md",
 ]
@@ -86,10 +88,10 @@ artifacts = [
   "/workspace/constraints",
   "/workspace/scripts_override",
   "/workspace/results/nangate45/aes/base/1_synth.v",
+  "/workspace/results/nangate45/aes/base/1_2_yosys.v",
   "/workspace/results/nangate45/aes/base/6_final.odb",
   "/workspace/results/nangate45/aes/base/6_final.v",
   "/workspace/results/nangate45/aes/base/6_final.gds",
-  "/workspace/results/nangate45/aes/base/6_final.spef",
 ]
 [steps.agent]
 timeout_sec = 1500.0

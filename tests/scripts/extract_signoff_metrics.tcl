@@ -1,8 +1,10 @@
 # Independent signoff metric extraction for the Harbor verifier.
-# Always loads the golden SDC; never reads Agent-written reports.
+# Always loads the golden SDC, extracts parasitics inside the verifier
+# (never trusting agent-submitted SPEF/JSON/log files), exports the ODB
+# netlist for independent LEC, and computes PPA / DRC / antenna metrics.
 #
 # Environment:
-#   SIGNOFF_ODB, GOLDEN_SDC, METRICS_JSON, [SPEF_FILE], [PLATFORM_DIR]
+#   SIGNOFF_ODB, GOLDEN_SDC, METRICS_JSON, [ODB_VERILOG_OUT], [PLATFORM_DIR]
 
 if {![info exists ::env(SIGNOFF_ODB)] || ![info exists ::env(GOLDEN_SDC)] || ![info exists ::env(METRICS_JSON)]} {
   puts "ERROR: SIGNOFF_ODB, GOLDEN_SDC, and METRICS_JSON must be set"
@@ -35,7 +37,7 @@ proc json_int {x} {
   return $r
 }
 
-# Liberty must be loaded before SPEF / STA. The ODB has geometry but not .lib.
+# Liberty must be loaded before parasitics / STA. The ODB has geometry but not .lib.
 set libf [file join $plat lib NangateOpenCellLibrary_typical.lib]
 if {![file exists $libf]} {
   set libs [glob -nocomplain [file join $plat lib *typical*.lib]]
@@ -56,6 +58,15 @@ if {[catch {read_db $odb} err]} {
   exit 1
 }
 
+# Export the actual netlist from the ODB so the verifier can LEC it against golden RTL.
+if {[info exists ::env(ODB_VERILOG_OUT)] && $::env(ODB_VERILOG_OUT) ne ""} {
+  if {[catch {write_verilog $::env(ODB_VERILOG_OUT)} err]} {
+    puts "WARNING: write_verilog failed: $err"
+  } else {
+    puts "Exported ODB netlist: $::env(ODB_VERILOG_OUT)"
+  }
+}
+
 # Force golden constraints (overwrite anything stored in the ODB).
 set sdc_ok 0
 if {![catch {read_sdc $sdc} err]} {
@@ -68,21 +79,21 @@ if {![catch {read_sdc $sdc} err]} {
 }
 puts "Loaded golden SDC: $sdc"
 
-# Parasitics: prefer SPEF produced with the design; otherwise estimate.
+# Parasitics: NEVER trust agent-submitted SPEF. Extract inside the verifier using
+# the read-only platform RCX rules, falling back to estimate_parasitics if needed.
 set spef_used ""
-if {[info exists ::env(SPEF_FILE)] && $::env(SPEF_FILE) ne "" && [file exists $::env(SPEF_FILE)]} {
-  if {[catch {read_spef $::env(SPEF_FILE)} err]} {
-    puts "WARNING: read_spef failed: $err"
+set rcx_rules [file join $plat rcx_patterns.rules]
+if {[file exists $rcx_rules] && [info commands extract_parasitics] ne ""} {
+  set tmp_spef [file join [file dirname $outj] verifier_rcx.spef]
+  if {![catch {
+    define_process_corner -ext_model_index 0 X
+    extract_parasitics -ext_model_file $rcx_rules
+    write_spef $tmp_spef
+    read_spef $tmp_spef
+  } err]} {
+    set spef_used "verifier_openrcx:$rcx_rules"
   } else {
-    set spef_used $::env(SPEF_FILE)
-  }
-}
-if {$spef_used eq ""} {
-  set cand [file join [file dirname $odb] 6_final.spef]
-  if {[file exists $cand]} {
-    if {![catch {read_spef $cand}]} {
-      set spef_used $cand
-    }
+    puts "WARNING: verifier OpenRCX extraction failed: $err"
   }
 }
 if {$spef_used eq ""} {
@@ -159,7 +170,6 @@ if {![catch {ord::get_db_block} block] && $block ne "NULL" && $block ne ""} {
 }
 
 # Power: report_power -format json (Watts). Parsed by helpers.py from power.json.
-# sta::design_power / sta::cmd_corner are not available in this OpenSTA build.
 set intern ""
 set switchp ""
 set leak ""
@@ -192,7 +202,13 @@ if {[info commands check_drc] ne ""} {
   catch {check_drc}
 }
 if {[info commands check_antennas] ne ""} {
-  catch {check_antennas}
+  if {![catch {set ant_res [check_antennas]} err]} {
+    if {[string is integer -strict $ant_res]} {
+      set ant $ant_res
+    }
+  } else {
+    puts "WARNING: check_antennas failed: $err"
+  }
 }
 if {![catch {ord::get_db_block} block] && $block ne "NULL"} {
   if {![catch {$block getMarkers} markers]} {

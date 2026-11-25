@@ -188,10 +188,12 @@ def check_config_integrity() -> Tuple[float, List[str]]:
             reasons.append(f"SDC_FILE redirected to {val}")
 
     ws_sdc = WORKSPACE / "constraints" / "constraint.sdc"
-    if ws_sdc.is_file() and GOLDEN_SDC.is_file():
+    if not ws_sdc.is_file():
+        reasons.append("missing /workspace/constraints/constraint.sdc")
+    elif GOLDEN_SDC.is_file():
         gper = golden_clock_period()
         wper = sdc_clock_period(ws_sdc)
-        if gper is not None and wper is not None and abs(gper - wper) > 1e-9:
+        if gper is not None and (wper is None or abs(gper - wper) > 1e-9):
             reasons.append(f"workspace SDC period {wper} != golden {gper}")
         # Also catch any extra exception commands in the workspace SDC
         for rx, name in ILLEGAL_PATTERNS:
@@ -425,13 +427,47 @@ def run_kepler_netlist_lec(net1: Path, net2: Path) -> Tuple[float, str]:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def extract_signoff_metrics(odb: Path = FINAL_ODB, spef: Optional[Path] = None) -> Dict[str, Any]:
-    """Recompute PPA/DRC from the ODB with the golden SDC. Never trust agent reports."""
+def synthesize_golden_netlist(out_v: Path, top: str = "aes_cipher_top") -> Tuple[bool, str]:
+    """Synthesize a trusted reference netlist from GOLDEN_RTL inside the verifier."""
+    gold_files = _rtl_sources(GOLDEN_RTL)
+    if not gold_files:
+        return False, f"no golden RTL in {GOLDEN_RTL}"
+    if not LIBERTY.is_file():
+        return False, f"missing liberty {LIBERTY}"
+    work = Path(tempfile.mkdtemp(prefix="gold_synth_"))
+    script = work / "gold_synth.ys"
+    ys = [f"read_verilog -sv {f}" for f in gold_files]
+    ys += [
+        f"synth -top {top} -flatten",
+        f"dfflibmap -liberty {LIBERTY}",
+        f"abc -liberty {LIBERTY}",
+        "opt_clean -purge",
+        f"write_verilog -noattr -noexpr -nohex -nodec {out_v}",
+    ]
+    script.write_text("\n".join(ys) + "\n")
+    try:
+        run = subprocess.run(
+            ["yosys", "-q", "-s", str(script)],
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+        ok = run.returncode == 0 and out_v.is_file() and out_v.stat().st_size > 0
+        return ok, ("golden synth ok" if ok else f"golden synth failed rc={run.returncode}")
+    except subprocess.TimeoutExpired:
+        return False, "golden synth timeout"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def extract_signoff_metrics(
+    odb: Path = FINAL_ODB,
+    odb_verilog_out: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Recompute PPA/DRC from the ODB with the golden SDC and verifier-side parasitics."""
     ensure_logdir()
     if not odb.is_file():
         raise FileNotFoundError(str(odb))
-    if spef is None and FINAL_SPEF.is_file():
-        spef = FINAL_SPEF
     out_json = LOGDIR / "signoff_metrics.json"
     tcl = SCRIPTS_DIR / "extract_signoff_metrics.tcl"
     if not tcl.is_file():
@@ -443,8 +479,8 @@ def extract_signoff_metrics(odb: Path = FINAL_ODB, spef: Optional[Path] = None) 
     env["GOLDEN_SDC"] = str(GOLDEN_SDC)
     env["METRICS_JSON"] = str(out_json)
     env["PLATFORM_DIR"] = str(PLATFORM_DIR)
-    if spef and spef.is_file():
-        env["SPEF_FILE"] = str(spef)
+    if odb_verilog_out is not None:
+        env["ODB_VERILOG_OUT"] = str(odb_verilog_out)
     cmd = ["openroad", "-no_init", "-no_splash", "-exit", str(tcl)]
     run = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
     (LOGDIR / "signoff_extract.log").write_text(
@@ -718,43 +754,44 @@ def evaluate_step3() -> int:
     baselines = load_baselines()
     g_int, reasons = check_config_integrity()
     g_func, func_msg = run_functional_sim(WORKSPACE / "rtl", GOLDEN_TB)
-    # LEC RTL vs golden; also try final netlist if present.
+    # 1) RTL LEC vs golden RTL
     g_lec, lec_msg = run_yosys_lec(GOLDEN_RTL, WORKSPACE / "rtl")
-    final_lec = RESULTS_DIR / "6_final_lec.v"
-    synth_lec = RESULTS_DIR / "1_synth_lec.v"
-    net_gate = final_lec if final_lec.is_file() else FINAL_V
-    net_gold = synth_lec if synth_lec.is_file() else (resolve_synth_verilog() or SYNTH_V)
-    if net_gate.is_file() and net_gold.is_file():
-        try:
-            lec_v, lec_v_msg = run_kepler_netlist_lec(net_gold, net_gate)
-            log(f"netlist LEC ({net_gold.name} vs {net_gate.name}): {lec_v_msg}")
-            if lec_v != 1.0:
-                g_lec = 0.0
-                lec_msg = lec_v_msg
-        except Exception as exc:
-            log(f"netlist LEC error: {exc}")
-            g_lec = 0.0
-            lec_msg = str(exc)
-    elif FINAL_V.is_file():
-        # Fall back to Yosys only if Kepler ingredients are missing.
-        try:
-            lec_v, lec_v_msg = run_yosys_lec(GOLDEN_RTL, FINAL_V)
-            log(f"6_final.v LEC: {lec_v_msg}")
-            if lec_v != 1.0:
-                g_lec = 0.0
-                lec_msg = lec_v_msg
-        except Exception as exc:
-            log(f"6_final.v LEC error: {exc}")
-    g_func_gate = 1.0 if (g_func == 1.0 and g_lec == 1.0) else 0.0
 
+    # 2) Extract signoff metrics AND export the actual netlist from 6_final.odb
     metrics = None
     extract_err = None
-    if FINAL_ODB.is_file():
-        try:
-            metrics = extract_signoff_metrics(FINAL_ODB)
-        except Exception as exc:
-            extract_err = str(exc)
-            log(f"signoff extract failed: {exc}")
+    odb_export_dir = Path(tempfile.mkdtemp(prefix="odb_lec_"))
+    odb_netlist = odb_export_dir / "odb_exported.v"
+    gold_netlist = odb_export_dir / "golden_synth.v"
+    try:
+        if FINAL_ODB.is_file():
+            try:
+                metrics = extract_signoff_metrics(FINAL_ODB, odb_verilog_out=odb_netlist)
+            except Exception as exc:
+                extract_err = str(exc)
+                log(f"signoff extract failed: {exc}")
+
+        # 3) Close the anti-hacking loop: verify 6_final.odb's exported netlist
+        #    matches a verifier-synthesized golden netlist via Kepler Formal.
+        if g_lec == 1.0 and odb_netlist.is_file() and odb_netlist.stat().st_size > 0:
+            ok_gs, gs_msg = synthesize_golden_netlist(gold_netlist)
+            if ok_gs and _kepler_bin():
+                lec_v, lec_v_msg = run_kepler_netlist_lec(gold_netlist, odb_netlist)
+                log(f"ODB netlist LEC (verifier golden_synth vs 6_final.odb): {lec_v_msg}")
+                if lec_v != 1.0:
+                    g_lec = 0.0
+                    lec_msg = f"ODB netlist mismatch: {lec_v_msg}"
+            elif not ok_gs:
+                log(f"golden netlist synthesis failed: {gs_msg}")
+                g_lec = 0.0
+                lec_msg = gs_msg
+        elif g_lec == 1.0 and FINAL_ODB.is_file():
+            g_lec = 0.0
+            lec_msg = "failed to export netlist from 6_final.odb for LEC"
+    finally:
+        shutil.rmtree(odb_export_dir, ignore_errors=True)
+
+    g_func_gate = 1.0 if (g_func == 1.0 and g_lec == 1.0) else 0.0
     g_flow, flow_reasons = compute_flow_gate(metrics, baselines)
     gates = {
         "G_integrity": g_int,
