@@ -4,7 +4,7 @@
 
 在真实数字 ASIC 开发中，芯片实现并非一次性的代码生成，而是跨越 **RTL 综合、布局规划（Floorplan）、标准单元布局（Placement）、时钟树综合（CTS）、布线（Routing）与签核（Signoff）** 的长程迭代优化过程。工程师需要在 **性能（Timing / WNS / TNS）、功耗（Power）、面积（Area）以及可布线性（Routability / DRC）** 之间进行持续权衡，并在严格遵守功能正确性与时序约束（SDC）的前提下完成时序收敛。
 
-本任务基于开源 RTL-to-GDSII 工具链 [OpenROAD-flow-scripts (ORFS)](https://github.com/the-openroad-project/openroad-flow-scripts) 与 [Harbor Multi-step 评测框架](https://docs.harborframework.com/tasks/multi-step)，以 **NanGate45 工艺节点下的 AES-128 硬件加密核（`aes_cipher_top`）** 为载体，构造了一道在紧时钟约束与劣质初始物理配置下的端到端 PPA 优化与时序收敛挑战。
+本任务基于开源 RTL-to-GDSII 工具链 [OpenROAD-flow-scripts (ORFS)](https://github.com/the-openroad-project/openroad-flow-scripts) 与 [Harbor Multi-step 评测框架](https://docs.harborframework.com/tasks/multi-step)，以 **NanGate45 工艺节点下的 AES-128 硬件加密核（`aes_cipher_top`）** 为载体，构造了一道端到端 PPA 优化挑战：黄金时钟为 `0.84 ns`（不可放宽），Baseline 在该约束下 Setup 已收敛，主要差距在 Core Area（功耗几乎持平），Agent 须在硬门控下压缩面积并保持签核质量。
 
 ### 核心考察维度
 
@@ -28,7 +28,7 @@ orfs-ppa-timing-closure/
 │   ├── Dockerfile                         # 锁定版本 ORFS + 仿真/等价性/分析工具（离线可复现）
 │   └── starter/                           # 初始待优化工程（挂入容器 /workspace）
 │       ├── rtl/                           # AES-128 RTL 源码
-│       ├── constraints/constraint.sdc     # 紧时钟约束文件（只读参考）
+│       ├── constraints/constraint.sdc     # 工作区时钟约束（0.84 ns；Agent 可写，Verifier 对照 golden）
 │       ├── config.mk                      # 初始基线 ORFS 配置
 │       ├── Makefile                       # 封装各阶段运行与冒烟仿真命令
 │       └── tb/tb_smoke.sv                 # 基础冒烟测试平台
@@ -36,7 +36,7 @@ orfs-ppa-timing-closure/
 │   ├── golden/
 │   │   ├── constraint.sdc                 # 签核强制使用的黄金 SDC
 │   │   ├── rtl_golden/                    # 黄金 RTL（用于形式等价性校验）
-│   │   └── tb_signoff.sv                  # 完整黄金测试集（NIST FIPS-197 + 1000 组随机向量）
+│   │   └── tb_signoff.sv                  # 完整黄金测试集（NIST FIPS-197 + 随机向量，约 1006 组）
 │   ├── scripts/
 │   │   ├── extract_signoff_metrics.tcl    # 从 6_final.odb 独立重算签核 PPA/DRC 的 Tcl 脚本
 │   │   └── check_lec.ys                   # Yosys 逻辑等价性检查脚本
@@ -69,7 +69,7 @@ orfs-ppa-timing-closure/
 | **工艺库 (PDK)** | NanGate45 (`nangate45`) | 45nm 开源标准单元库，单位为 ns/um，单轮迭代高效且具备真实时序与拥塞特征 |
 | **功能仿真** | Icarus Verilog (`iverilog`) + Verilator | RTL 功能仿真、Lint 检查与黄金测试向量回归 |
 | **容器架构** | **Single-container 主环境 + Separate Verifier 独立评分容器** | Agent 通过原生 CLI/Makefile 操作本地只读 EDA 工具链（`/OpenROAD-flow-scripts` 设为只读），避免多容器 RPC 失真；评分阶段在全新干净容器内仅基于受检 Artifact 独立重跑签核，彻底隔离评分逻辑与测试集。 |
-| **网络与确定性** | `network_mode = "none"`，固定 `NUM_CORES = 4` | 全程断网离线运行，固定工具镜像版本与线程数，确保结果严格可复现。 |
+| **网络与确定性** | `network_mode = "no-network"`，固定 `NUM_CORES = 4` | 全程断网离线运行，固定工具镜像版本与线程数，确保结果严格可复现。 |
 
 ---
 
@@ -78,7 +78,7 @@ orfs-ppa-timing-closure/
 本任务遵循 [Harbor Multi-step 规范](https://docs.harborframework.com/tasks/multi-step)，采用 3 步递进式里程碑与 `multi_step_reward_strategy = "final"` 聚合策略：
 
 1. **Step 1 — 前端综合探索（`step-1-frontend-synth`）**
-   - **目标**：分析关键路径与综合瓶颈，在保持接口与周期级行为不变的前提下优化组合逻辑与综合策略，产出 `1_synth.v` 与 `handoff_notes.md`。
+   - **目标**：分析关键路径与综合瓶颈，在保持接口与周期级行为不变的前提下优化组合逻辑与综合策略，产出综合网表（ORFS 26Q4 写出 `1_2_yosys.v`；`task.toml` 的 artifact 路径是 `1_synth.v`，Makefile 会拷贝，验证器兼容两者）与 `handoff_notes.md`。
    - **门控策略**：硬约束（功能仿真 100% 通过 + LEC 通过 + 综合无错）设置 `min_reward = 1.0`，任一失败则触发早停；综合后时序与面积作为软性监控指标记录，不因轻度估算负裕量阻断进入后端。
 2. **Step 2 — 布局规划、布局与时钟树综合（`step-2-place-cts`）**
    - **目标**：承接前端 Netlist Handoff，通过调优 Floorplan、Placement Density、Cell Padding 与 CTS 策略控制拥塞、Clock Skew 与早期时序违例，产出合法的 `4_cts.odb`。
@@ -88,6 +88,22 @@ orfs-ppa-timing-closure/
    - **聚合策略**：采用 `multi_step_reward_strategy = "final"`，以最终端到端签核结果作为整个 Trial 的成绩，避免将中间阶段与终极签核做无意义的算术平均。
 4. **上下文交接（Session Resume）设计**
    - 默认不启用 `--resume-trajectory`（每步新起会话，保留文件系统持久化），高度还原芯片工程中「前端交付 Netlist + 报告给后端」的真实 Handoff 场景；同时也支持在评估时传入 `--resume-trajectory` 对比长上下文记忆对后端收敛的增益。
+
+### 3.1 各步可见性、可改范围与产物交接
+
+Agent 侧跨步共享同一 `/workspace`（由 `environment/starter/` 初始化）；Verifier 为 Separate 容器，**只挂载** `task.toml` 中该步 `artifacts` 列出的路径，且看不到 Agent 对话。评分实现在 `tests/helpers.py`（各步 `steps/*/tests/test.sh` 只负责调用 `step1` / `step2` / `step3`）。`tests/` 对 Agent 不可见。
+
+| 步骤 | Agent 可见 | 允许改动 | 主要产出（artifacts） | Verifier（`helpers.py`） |
+| :--- | :--- | :--- | :--- | :--- |
+| **Step 1** `step-1-frontend-synth` | 全 `/workspace`（RTL、`config.mk`、SDC、Makefile、smoke TB）；**不可见** `tests/` | RTL 组合逻辑结构；`config.mk` 综合相关旋钮；可写 `scripts_override/`、`handoff_notes.md` | `rtl/`、`config.mk`、`constraints/`、`scripts_override/`、综合网表（ORFS 26Q4 写出 `1_2_yosys.v`；`artifacts` 名 `1_synth.v`，Makefile 会拷贝，两者都认）、`handoff_notes.md` | `check_config_integrity` + 黄金 TB 仿真 + RTL↔黄金 LEC + 综合网表存在（`min_reward`） |
+| **Step 2** `step-2-place-cts` | 上步残留的 `/workspace`（含网表与配置） | Floorplan / Place / CTS 旋钮（如利用率、密度、`TNS_END_PERCENT` 等）；物理 Tcl 可放 `scripts_override/` | 上列 + `4_cts.odb` | 仅 integrity + 合法 `4_cts.odb`（本步不重跑仿真/LEC） |
+| **Step 3** `step-3-route-signoff` | 同上，承接 CTS 结果 | 布线与签核相关旋钮；仍不得放宽 SDC | 上列 + `6_final.odb` / `.v` / `.gds` / `.spef` | integrity + 黄金 TB + LEC；用黄金 SDC 从 `6_final.odb` 重算指标；DRC=0 且 Hold≥0 后才算连续 PPA 分 |
+
+`/workspace` 里的 SDC 与 `config.mk` **对 Agent 可写**（镜像只读的是 ORFS `tools/`、`platforms/`、`flow/scripts/`）。每步都会跑 `check_config_integrity`：周期必须等于 `tests/golden/constraint.sdc` 的 0.84 ns，并拦截时序例外与 `SDC_FILE` 重定向。Step 3 签核不读 Agent 的 SDC/JSON/log，由 `tests/scripts/extract_signoff_metrics.tcl` 强制加载黄金 SDC。
+
+`tests/golden/rtl_golden/` 与 `environment/starter/rtl/` **初始内容相同**，是 Agent 看不见的等价参考；LEC 比的是提交 RTL（及网表）和这份黄金 RTL。`starter/tb/tb_smoke.sv` 只有 2 组向量，给 Agent 做 `make sim-smoke`；Verifier 在 Step 1 与 Step 3 用 `tests/golden/tb_signoff.sv`（NIST + 随机，约 1006 组），故意与 smoke 分开。`tests/scripts/check_lec.ys` 是 LEC 骨架（`helpers.py` 会生成等价脚本）。
+
+Oracle **不是搜索出来的**：各步 `solution/solve.sh` 把手工标定的 `config_stepN.mk` 写入 `config.mk`，再跑对应 `make` 目标。Harbor `--agent oracle` 按步串行调用这些脚本（任务内无顶层 `solution/`）。`aes_ng45_fp.def` 在 solution 目录中，参考配置未启用。
 
 ---
 
@@ -106,7 +122,8 @@ harbor run \
   --path ./orfs-ppa-timing-closure \
   --agent oracle
 
-# 2. 运行无操作基线（验证 Baseline 初始状态与防作弊边界）
+# 2. 无操作 Agent（nop）：不修改 workspace。Step 1 没有综合网表，门控失败。
+#    §6 的 Baseline（reward 0.5384）不是这条命令，而是用 starter 的 config.mk 跑完整条 flow。
 harbor run \
   --path ./orfs-ppa-timing-closure \
   --agent nop
@@ -135,12 +152,12 @@ harbor run \
 
 ### 4.3 独立验证与防 Reward Hacking 流程
 
-每个阶段结束后，Harbor 启动独立的 Separate Verifier 容器并仅挂载经清洗的受检 Artifact（`rtl/`、`config.mk`、`scripts_override/`、`1_synth.v`、`4_cts.odb`、`6_final.odb`、`6_final.gds`）：
+每个阶段结束后，Harbor 启动独立的 Separate Verifier 容器，只挂载该步 `artifacts`（`rtl/`、`config.mk`、`scripts_override/`、综合网表 `1_2_yosys.v` / `1_synth.v`，以及 Step 2 起的 `4_cts.odb`、Step 3 的 `6_final.odb` / `6_final.gds`）。各步实际检查以 §3.1 为准：
 
-1. **配置与约束完整性审查**：扫描 `config.mk` 与 Tcl hook，拦截放宽时钟周期、`set_false_path`、`set_multicycle_path`、`SDC_FILE` 重定向等非法操作。
-2. **独立功能仿真与形式等价性**：使用 Verifier 内置黄金测试集（NIST FIPS-197 + 1000 组随机激励）编译仿真 Agent 提交的 RTL，并运行 Yosys LEC 校验网表与黄金 RTL 等价。
-3. **独立签核指标抽取**：拒绝读取 Agent 产生的任何日志或 JSON，由 Verifier 加载内置 **Golden SDC** 与 Agent 提交的 `6_final.odb`，现场运行 OpenROAD/OpenSTA 抽取 WNS、TNS、Hold Slack、Area、Power、DRC 与电气违例。
-4. **写入奖励文件**：同时生成 `/logs/verifier/reward.txt`（`[0.0, 1.0]` 标量主分）与 `/logs/verifier/reward.json`（各门控状态与多维细粒度得分）。
+1. **每步都做配置与约束完整性审查**：扫描 `config.mk`、workspace SDC 与 Tcl hook，拦截放宽时钟周期、`set_false_path`、`set_multicycle_path`、`SDC_FILE` 重定向等非法操作。
+2. **Step 1 与 Step 3 做功能仿真与形式等价**：用 `tb_signoff.sv`（约 1006 组）仿真提交的 RTL，并用 Yosys LEC 对照黄金 RTL。Step 2 不重跑这两项。
+3. **仅 Step 3 做独立签核**：不读 Agent 的日志或 JSON，加载 `tests/golden/constraint.sdc`，从 `6_final.odb` 重算 WNS、TNS、Hold、Area、Power、DRC。
+4. **写入奖励文件**：生成 `/logs/verifier/reward.txt`（`[0.0, 1.0]` 标量主分）与 `/logs/verifier/reward.json`（Harbor 0.27 要求顶层必须全是有限数字）；门控状态与多维细项写在 `/logs/verifier/reward_details.json`。
 
 ---
 
@@ -164,14 +181,14 @@ $$R_{\text{final}} = G_{\text{integrity}} \cdot G_{\text{func}} \cdot G_{\text{f
 
 ## 6. Oracle 参考解运行结果与复现记录
 
-> 说明：以下表格记录在固定镜像与 `NUM_CORES=4`、离线环境下实测的 Baseline（初始劣质配置）与 Oracle 参考解对比数据；完成本地镜像构建与标定后，将实测数值填入下表并同步写入 `tests/baselines.json`。
+> 说明：下表是固定镜像、`NUM_CORES=4`、离线环境下的实测结果，并已写入 `tests/baselines.json`。Baseline 是 starter `config.mk` 跑完整条 flow；Oracle 是三步 `solve.sh`。这不是 `harbor --agent nop`，也不是下面第 3–5 条 Agent 命令的成绩。
 
 ### 6.1 环境版本锁定
 
 - **基础镜像**：`openroad/orfs:26Q4-554-g82ac25be5@sha256:b59431453d328d6fbf36669e1908b15634c11da51970cc2218a702783dcd6174`
 - **工艺库**：`nangate45`
 - **目标时钟周期（Golden SDC）**：`0.84`
-- **硬件与并发配置**：8 vCPU / 16 GB RAM，`NUM_CORES=4`，`network_mode="none"`
+- **硬件与并发配置**：8 vCPU / 16 GB RAM，`NUM_CORES=4`，`network_mode="no-network"`
 
 ### 6.2 Baseline vs. Oracle 实测指标对比
 
@@ -182,8 +199,8 @@ $$R_{\text{final}} = G_{\text{integrity}} \cdot G_{\text{func}} \cdot G_{\text{f
 | **Setup WNS (ns)** | `0.005438` | `0.006188` | 目标 $\ge 0$ |
 | **Setup TNS (ns)** | `0.00` | `0.00` | 目标 $= 0$ |
 | **Hold WNS (ns)** | `0.10479` | `0.102505` | 硬门控 $\ge 0$ |
-| **Core / StdCell Area ($\mu\text{m}^2$)** | `73516.016 / 20188.868` | `61583.256 / 19797.05` | 显著缩减 |
-| **Total Power (mW)** | `44.457` | `43.411` | OpenSTA 签核值 |
+| **Core / StdCell Area ($\mu\text{m}^2$)** | `73516.016 / 20188.868` | `61583.256 / 19797.05` | Core Area 约缩减 16% |
+| **Total Power (mW)** | `44.457` | `43.411` | 接近持平（OpenSTA 签核值） |
 | **DRC Violations** | `0` | `0` | 硬门控 $= 0$ |
 | **Antenna / Slew / Cap Violations** | `0 / 0 / 0` | `0 / 0 / 0` | 签核质量项 |
 | **总运行耗时（3 步合计）** | `299 s` | `341 s` | 远低于单步超时阈值 |

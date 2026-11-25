@@ -8,9 +8,6 @@
 #
 # Build (on an amd64 Docker host, or with --platform linux/amd64):
 #   docker build -t orfs-ppa-timing-closure:26Q4-554-g82ac25be5-eda .
-#
-# CSE (no Docker daemon): convert a docker-save tarball to SIF without root:
-#   singularity build orfs-ppa-timing-closure.sif docker-archive://orfs-ppa-timing-closure.tar
 
 FROM openroad/orfs:26Q4-554-g82ac25be5@sha256:b59431453d328d6fbf36669e1908b15634c11da51970cc2218a702783dcd6174
 
